@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHUD OS</title>
+<link rel="icon" href="/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="crt"></div>
+
+<section id="boot">
+  <canvas class="hero" role="img" aria-label="Chud OS logo: half human, half terminal face"></canvas>
+  <pre id="boot-log"></pre>
+  <div id="boot-actions" hidden>
+    <button class="btn primary" data-act="connect">[ CONNECT WALLET ]</button>
+    <button class="btn" data-act="demo">[ DEMO WALLET ]</button>
+    <button class="btn ghost" data-act="enter">[ BROWSE AS GUEST ]</button>
+  </div>
+  <p class="boot-foot">PAPER TRADING ONLY // NO FUNDS EVER LEAVE YOUR WALLET // NOT FINANCIAL ADVICE</p>
+</section>
+
+<main id="os" hidden>
+  <header class="bar">
+    <span class="brand"><img src="/logo.png" alt=""> CHUD&nbsp;OS <small>v0.1</small></span>
+    <span id="status"></span>
+    <span id="clock"></span>
+  </header>
+
+  <div class="hero-wrap"><canvas class="hero" role="img" aria-label="Chud OS logo: half human, half terminal face"></canvas></div>
+
+  <div class="grid">
+    <!-- left: you -->
+    <section class="col">
+      <div class="panel human" id="p-wallet">
+        <h2><span>// SUBJECT</span><span class="tag" id="wallet-tag">OFFLINE</span></h2>
+        <div id="wallet-body" class="body"><p class="dim">No wallet linked. Type <b>connect</b> or <b>demo</b>.</p></div>
+      </div>
+      <div class="panel human" id="p-diag">
+        <h2><span>// DIAGNOSIS</span></h2>
+        <div id="diag-body" class="body"><p class="dim">Awaiting trade history…</p></div>
+      </div>
+      <div class="panel human" id="p-trips">
+        <h2><span>// YOUR LAST TRADES</span></h2>
+        <div id="trips-body" class="body scroll"></div>
+      </div>
+    </section>
+
+    <!-- middle: your agent -->
+    <section class="col">
+      <div class="panel machine" id="p-versus">
+        <h2><span>// YOU vs YOUR AGENT</span><span class="tag" id="agent-tag">—</span></h2>
+        <div id="versus-body" class="body"><p class="dim">An agent is assigned once a wallet is linked.</p></div>
+      </div>
+      <div class="panel machine" id="p-agent">
+        <h2><span>// AGENT PAPER BOOK</span><span class="tools"><button data-cmd="agent pause">pause</button><button data-cmd="agent resume">resume</button><button data-cmd="agent reset">reset</button></span></h2>
+        <div id="agent-body" class="body"></div>
+      </div>
+    </section>
+
+    <!-- right: grand chud -->
+    <section class="col">
+      <div class="panel grand" id="p-grand">
+        <h2><span>// THE GRAND CHUD</span><span class="tag" id="grand-tag">—</span></h2>
+        <div id="grand-body" class="body"></div>
+      </div>
+      <div class="panel" id="p-board">
+        <h2><span>// LEADERBOARD</span></h2>
+        <div id="board-body" class="body scroll"></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="term">
+    <pre id="out"></pre>
+    <form id="prompt" autocomplete="off"><label for="cmd">chud@os:~$</label><input id="cmd" spellcheck="false" autofocus aria-label="command"></form>
+  </section>
+</main>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

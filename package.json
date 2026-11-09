@@ -1,0 +1,21 @@
+{
+  "name": "chud-os",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "MARKET=sim node --watch server/index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bs58": "^6.0.0",
+    "express": "^4.22.3",
+    "tweetnacl": "^1.0.3"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}

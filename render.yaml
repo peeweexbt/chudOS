@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: chud-os
+    runtime: node
+    plan: starter
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: HELIUS_API_KEY
+        sync: false
+      - key: MARKET
+        value: live
+      - key: DB_FILE
+        value: /app/data/db.json
+    disk:
+      name: chud-data
+      mountPath: /app/data
+      sizeGB: 1
