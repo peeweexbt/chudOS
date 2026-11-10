@@ -1,6 +1,7 @@
 // Market data adapters. Both expose the same interface:
 //   tick(), candidates() -> [token], price(mint) -> usd|null, solUsd
 // live: DexScreener public API (no key). sim: synthetic meme coin market.
+import bs58 from 'bs58';
 import { seedRng, clamp } from './util.js';
 
 export const MARKET = process.env.MARKET === 'sim' ? 'sim' : 'live';
@@ -50,7 +51,7 @@ const NAMES = ['PEPE', 'CHAD', 'WOJAK', 'BONKUS', 'GIGA', 'MOGGER', 'COPE', 'SEE
 class SimMarket {
   constructor() { this.r = seedRng('chud-sim-' + Date.now()); this.tokens = new Map(); this.solUsd = 150; this.last = Date.now(); this.n = 0; for (let i = 0; i < 18; i++) this.launch(true); }
   launch(old = false) {
-    const r = this.r; const mint = `sim${(++this.n).toString(36)}${Math.floor(r() * 1e9).toString(36)}`;
+    const r = this.r; this.n++; const mint = bs58.encode(Uint8Array.from({ length: 32 }, () => Math.floor(r() * 256))); // valid-looking pubkey so live code paths can be tested
     const t = { mint, symbol: NAMES[Math.floor(r() * NAMES.length)] + (r() < 0.5 ? '' : Math.floor(r() * 9)), priceUsd: 1e-5 * (0.3 + r() * 3),
       liquidityUsd: 8e3 + r() * 6e4, volume24h: 0, born: Date.now() - (old ? r() * 6 * 36e5 : 0), change5m: 0, change1h: 0,
       quality: (r() - 0.55) * 0.02, vol: 0.03 + r() * 0.05, dead: false, hist: [] };

@@ -116,6 +116,11 @@ function help(short) {
     'feed <address>                       feed any wallet to the Grand Chud (read-only)',
     'inspect <address>                    show a fed wallet\'s stats',
     'market                               top tokens the agents are watching',
+    'live on|off                          let your agent propose real trades you sign in Phantom',
+    'approve [n] | reject [n]             act on your agent\'s nth open live proposal',
+    'agentwallet | auto on|off           automatic agent wallet: create, start/stop',
+    'closeall | withdraw | exportkey      sell everything, pull SOL back to you, export the key',
+    'kill | unkill | golive | stoplive    admin: kill switch, Grand Chud live mode',
     'logout | clear | help'].join('\n'));
 }
 const history = []; let hi = 0;
@@ -131,6 +136,27 @@ async function run(line) {
       case 'clear': $('#out').textContent = ''; return;
       case 'connect': return await connect(args[0]);
       case 'demo': return await demo();
+      case 'live': {
+        if (args[0] === 'on') return liveOptIn();
+        if (args[0] === 'off') { await api('/api/me/live', { method: 'POST', body: JSON.stringify({ enable: false }) }); await refresh(); return print('live proposals off.', 'ok'); }
+        const L = cfg.live || {}; return print(`server live: ${L.serverEnabled ? 'enabled' : 'disabled'}${L.killed ? ` · KILL SWITCH (${L.killedReason})` : ''}\nlimits: ${limitsText(L.limits)}\nusage: live on|off`);
+      }
+      case 'agentwallet': await api('/api/me/agent-wallet', { method: 'POST' }); await refresh(); return print(`agent wallet ready: ${me.agent.wallet}. deposit SOL to it.`, 'ok');
+      case 'auto': {
+        if (args[0] === 'off') { await api('/api/me/auto', { method: 'POST', body: JSON.stringify({ enable: false }) }); await refresh(); return print('auto buying off.', 'ok'); }
+        const r = await modal(`${WARNING}<p>Your agent will trade <b>by itself</b> from its agent wallet ${esc(me.agent?.wallet || '')}, using at most ${cfg.live?.limits ? esc(cfg.live.maxAgentSol) : ''} SOL, within: ${esc(limitsText(cfg.live?.limits))}. It stops buying on its own if it loses ${Math.round((cfg.live?.limits?.dailyLossKill || 0) * 100)}% in a day.</p><label>Type <b>I UNDERSTAND</b> <input name="confirm" autocomplete="off" required></label>`);
+        if (!r) return print('cancelled.');
+        await api('/api/me/auto', { method: 'POST', body: JSON.stringify({ enable: true, confirm: r.confirm.trim().toUpperCase() }) }); await refresh(); return print('AUTO TRADING ON. your agent is trading real SOL.', 'e');
+      }
+      case 'closeall': { print('selling every live position…'); const r = await api('/api/me/close-all', { method: 'POST' }); await refresh(); return print(`closed ${r.closed}. ${r.remaining ? `${r.remaining} could not be sold yet, retry.` : 'flat.'}`, 'ok'); }
+      case 'withdraw': { print('withdrawing all SOL to your wallet…'); const r = await api('/api/me/withdraw', { method: 'POST' }); await refresh(); return print(`withdrew ${r.sol.toFixed(4)} SOL. tx ${r.sig.slice(0, 10)}…`, 'ok'); }
+      case 'exportkey': return exportKey();
+      case 'approve': { const x = openProposals()[+(args[0] || 1) - 1]; if (!x) return print('no such proposal.', 'e'); return approve(x.id); }
+      case 'reject': { const x = openProposals()[+(args[0] || 1) - 1]; if (!x) return print('no such proposal.', 'e'); await api(`/api/me/proposals/${x.id}/reject`, { method: 'POST' }); await refresh(); return print('rejected.', 'ok'); }
+      case 'kill': await api('/api/admin/kill', { method: 'POST', body: JSON.stringify({ reason: args.join(' ') || 'manual kill switch' }) }); await refresh(); return print('KILL SWITCH ENGAGED. all live buying stopped.', 'e');
+      case 'unkill': await api('/api/admin/unkill', { method: 'POST' }); await refresh(); return print('kill switch released.', 'ok');
+      case 'golive': return grandLive(true);
+      case 'stoplive': return grandLive(false);
       case 'itsover': return itsOver({ id: 'PREVIEW', busted: Date.now() });
       case 'logout': setToken(null); me = null; render(); return print('session wiped.');
       case 'sync': if (!token) return print('connect first.', 'e'); print('resyncing…'); await api('/api/me/sync', { method: 'POST' }); await refresh(); return print('agent retrained.', 'ok');
@@ -145,6 +171,7 @@ async function run(line) {
 
 // ---------- data + render ----------
 async function refresh() {
+  api('/api/config').then((c) => { cfg = c; }).catch(() => {});
   const [m, g, b] = await Promise.all([token ? api('/api/me').catch((e) => { if (/auth/.test(e.message)) setToken(null); return null; }) : null, api('/api/grand'), api('/api/leaderboard')]);
   me = m; grand = g.grand; board = b; render();
   checkBust();
@@ -186,8 +213,10 @@ setInterval(() => { if (!$('#os').hidden) refresh().catch(() => {}); }, 4000);
 setInterval(() => { $('#clock').textContent = new Date().toISOString().slice(11, 19) + ' UTC'; }, 1000);
 
 function render() {
-  $('#status').innerHTML = `<span class="pill am">EXEC: PAPER</span><span>MKT: ${esc((cfg.market || '').toUpperCase())}</span><span>HIST: ${esc((cfg.history || '').toUpperCase())}</span>${board ? `<span>WALLETS: ${board.rows.length}</span>` : ''}`;
-  renderWallet(); renderAgent(); renderGrand(); renderBoard();
+  const L = cfg.live || {}; const userLive = me?.agent?.liveBook?.enabled;
+  const exec = L.killed ? '<span class="pill dn blink">KILL SWITCH</span>' : (cfg.grandLive || userLive) ? '<span class="pill dn">EXEC: LIVE</span>' : L.serverEnabled ? '<span class="pill am">EXEC: PAPER · LIVE READY</span>' : '<span class="pill am">EXEC: PAPER</span>';
+  $('#status').innerHTML = `${exec}<span>MKT: ${esc((cfg.market || '').toUpperCase())}</span><span>HIST: ${esc((cfg.history || '').toUpperCase())}</span>${board ? `<span>WALLETS: ${board.rows.length}</span>` : ''}`;
+  renderWallet(); renderAgent(); renderLive(); renderGrand(); renderBoard();
 }
 
 function renderWallet() {
@@ -195,7 +224,7 @@ function renderWallet() {
   const bw = $('#bar-wallet');
   if (w) { bw.textContent = `● ${short(w.address)}`; bw.className = 'btn mini linked'; bw.dataset.cmd = 'sync'; bw.title = 'linked · click to resync'; }
   else { bw.textContent = '👻 CONNECT PHANTOM'; bw.className = 'btn mini phantom'; bw.dataset.cmd = 'connect phantom'; bw.title = ''; }
-  $('#wallet-tag').textContent = w ? (w.demo ? 'DEMO' : w.verified ? 'VERIFIED' : 'WATCH') : 'OFFLINE';
+  $('#wallet-tag').textContent = w ? (me.demoLogin ? 'DEMO' : w.verified ? 'VERIFIED' : 'WATCH') : 'OFFLINE';
   if (!w) { $('#wallet-body').innerHTML = `<p class="dim">No wallet linked.</p><p><button class="btn primary phantom" data-cmd="connect phantom">[ 👻 CONNECT PHANTOM ]</button></p><p><button class="btn ghost" data-cmd="connect">[ OTHER WALLET ]</button> <button class="btn ghost" data-cmd="demo">[ DEMO ]</button></p>`; $('#diag-body').innerHTML = '<p class="dim">Awaiting trade history…</p>'; $('#trips-body').innerHTML = ''; return; }
   const s = w.stats;
   $('#wallet-body').innerHTML = `<dl class="kv">
@@ -228,10 +257,11 @@ function renderAgent() {
     : `<div class="solo">${avatar(a)}<p class="dim">Need 12+ closed round trips for a fair backtest. Agent is running on default rules.</p></div>`) +
     `<div class="rules">RULES › <code>${esc(a.policyText)}</code> · time stop ${a.maxHoldH.toFixed(1)}h</div>`;
   $('#agent-body').innerHTML = book(a);
+  document.querySelector('#p-agent h2 span').textContent = a.mode === 'live' ? '// AGENT BOOK · LIVE SOL' : '// AGENT PAPER BOOK';
 }
 
 function book(b) {
-  const paused = b.busted ? '<span class="dn blink">ITS OVER · OUT OF SOL</span>' : b.status !== 'running' ? '<span class="am">PAUSED</span>' : b.pausedUntil && b.pausedUntil > Date.now() ? `<span class="am">COOLDOWN ${ago(2 * Date.now() - b.pausedUntil)}</span>` : '<span class="up">LIVE·PAPER</span>';
+  const paused = b.busted ? '<span class="dn blink">ITS OVER · OUT OF SOL</span>' : b.status !== 'running' ? '<span class="am">PAUSED</span>' : b.pausedUntil && b.pausedUntil > Date.now() ? `<span class="am">COOLDOWN ${ago(2 * Date.now() - b.pausedUntil)}</span>` : b.mode === 'live' ? '<span class="dn">LIVE·MAINNET</span>' : '<span class="up">LIVE·PAPER</span>';
   return `<dl class="kv">
     <dt>status</dt><dd>${paused}</dd>
     <dt>equity</dt><dd>${b.equity.toFixed(3)} SOL <span class="${cls(b.pnl)}">(${sol(b.pnl, 3)})</span></dd>
@@ -257,7 +287,8 @@ function chart(vals, base, H = 7, W = 56) {
 function renderGrand() {
   const g = grand;
   if (!g) { $('#grand-body').innerHTML = '<p class="dim">dormant.</p>'; return; }
-  $('#grand-tag').textContent = `${g.wallets || 0} WALLETS FED`;
+  $('#grand-tag').textContent = g.mode === 'live' ? (g.liveOn ? 'LIVE · MAINNET' : 'LIVE · SELL-ONLY') : `${g.wallets || 0} WALLETS FED`;
+  $('#grand-tag').className = g.mode === 'live' ? 'tag dn' : 'tag';
   const o = g.backtest;
   $('#grand-body').innerHTML = `
     <div class="solo">${avatar(g)}<p class="dim">Learns from every wallet that connects or is fed. Pools their trades (size-normalised), fits shared exit + discipline rules, and buys what the most skilled wallets are buying.</p></div>
@@ -266,6 +297,8 @@ function renderGrand() {
       ${o ? `<dt>walk-forward</dt><dd>crowd ${sol(o.youPnl, 1)}u → chud <span class="${cls(o.agentPnl - o.youPnl)}">${sol(o.agentPnl, 1)}u</span></dd>` : ''}
     </dl>
     <div class="rules">RULES › <code>${esc(g.policyText || '')}</code></div>
+    ${g.mode === 'live' ? `<p class="dn">Trading real SOL from <span title="${esc(g.wallet)}">${short(g.wallet)}</span>.</p>` : ''}
+    ${me?.isAdmin ? adminControls(g) : ''}
     <div class="sub">CONSENSUS (last 6h)</div>
     ${g.consensus?.length ? `<table><tr><th>token</th><th class="r">wallets</th><th class="r">score</th></tr>${g.consensus.slice(0, 6).map((c) => `<tr><td>${esc(c.symbol)}</td><td class="r">${c.wallets.length}</td><td class="r">${c.score.toFixed(2)}</td></tr>`).join('')}</table>` : '<p class="dim">no skilled wallet has bought anything recently.</p>'}
     <div class="sub">BOOK</div>
@@ -278,6 +311,111 @@ function renderBoard() {
     ${b.grand ? `<tr><td>★</td><td class="up">GRAND CHUD</td><td class="r">—</td><td class="r">—</td><td class="r ${cls(b.grand.pnl)}">${b.grand.busted ? '<img class="av-xs" src="/its-over-sm.webp" alt="its over"> ' : ''}${sol(b.grand.pnl, 3)}</td></tr>` : ''}
     ${b.rows.map((r, i) => `<tr><td>${i + 1}</td><td class="${me?.wallet?.address === r.address ? 'w' : ''}">${short(r.address)}${r.demo ? ' <span class="dim">demo</span>' : r.verified ? ' ✓' : ''}</td><td class="r">${r.skill}</td><td class="r ${cls(r.pnlSol)}">${sol(r.pnlSol, 1)}</td><td class="r ${r.agent ? cls(r.agent.pnl) : 'dim'}">${r.agent?.busted ? '<img class="av-xs" src="/its-over-sm.webp" alt="its over"> ' : ''}${r.agent ? sol(r.agent.pnl, 3) : '—'}</td></tr>`).join('')}</table>
     <p class="dim">wallet pnl = realised history · agent pnl = paper book since assignment (SOL)</p>`;
+}
+
+// ---------- LIVE TRADING ----------
+const limitsText = (l = {}) => `${l.maxTradeSol} SOL/trade · ${l.maxDailySol} SOL/day · ${l.maxOpen} open · ${(l.slippageBps || 0) / 100}% max slippage · $${Math.round((l.minLiqUsd || 0) / 1000)}k min liquidity · auto-kill at -${Math.round((l.dailyLossKill || 0) * 100)}%/day`;
+function autoSection(L) {
+  const a = me.agent; const live = a.mode === 'live';
+  if (!L.serverEnabled) return '';
+  if (!L.custody) return '<p class="dim">Automatic agent wallets are not configured on this server.</p>';
+  if (!me.mayAutoTrade) return '<p class="dim">Automatic trading is invite-only right now.</p>';
+  let h = '<div class="sub">AUTOMATIC · AGENT WALLET</div>';
+  if (!a.wallet) return h + `<p>Your agent gets its own wallet and trades it by itself. You deposit SOL, it trades within the limits, and withdrawals only ever go back to your wallet.</p><button class="btn danger" data-cmd="agentwallet">[ CREATE AGENT WALLET ]</button>`;
+  h += `<dl class="kv"><dt>agent wallet</dt><dd><button class="copy" data-copy="${esc(a.wallet)}" title="copy address">${short(a.wallet)} ⧉</button></dd>
+    <dt>balance</dt><dd>${a.walletBal == null ? '…' : `${(+a.walletBal).toFixed(4)} SOL`}</dd><dt>uses at most</dt><dd>${L.maxAgentSol} SOL</dd>
+    <dt>status</dt><dd>${live ? (a.liveOn ? '<span class="dn blink">AUTO TRADING</span>' : '<span class="am">SELL-ONLY (winding down)</span>') : 'off (paper)'}</dd></dl>`;
+  if (!live) h += `<p class="dim">Deposit SOL to the address above from your wallet, then start.</p><button class="btn danger" data-cmd="auto on">[ START AUTO TRADING ]</button>`;
+  else h += `<p>${a.liveOn ? '<button class="btn mini ghost" data-cmd="auto off">STOP BUYING</button>' : '<button class="btn mini danger" data-cmd="auto on">RESUME</button>'} <button class="btn mini ghost" data-cmd="closeall">CLOSE ALL</button></p>`;
+  h += `<p><button class="btn mini ghost" data-cmd="withdraw">WITHDRAW TO MY WALLET</button> <button class="btn mini ghost" data-cmd="exportkey">EXPORT KEY</button></p>`;
+  return h;
+}
+document.addEventListener('click', (e) => { const c = e.target.closest('[data-copy]')?.dataset.copy; if (c) { navigator.clipboard?.writeText(c); print(`copied ${c}`, 'ok'); } });
+async function exportKey() {
+  const prov = window.phantom?.solana || providers()[0]?.[1]; if (!prov) throw new Error('Phantom not found');
+  if (!prov.publicKey) await prov.connect();
+  const { message } = await api(`/api/auth/nonce?address=${me.wallet.address}`);
+  const signed = await prov.signMessage(new TextEncoder().encode(message), 'utf8');
+  const r = await api('/api/me/agent-wallet/export', { method: 'POST', body: JSON.stringify({ message, signature: b58(new Uint8Array(signed?.signature || signed)) }) });
+  await modal(`<h3>AGENT WALLET KEY</h3><p>Anyone with this key controls the agent wallet. Import it into Phantom if you ever need to move funds yourself. Never share it.</p><label>address<input readonly value="${esc(r.address)}"></label><label>private key<input readonly value="${esc(r.secretKey)}" onclick="this.select()"></label>`);
+}
+const openProposals = () => (me?.agent?.liveBook?.proposals || []).filter((x) => ['pending', 'built'].includes(x.status));
+function renderLive() {
+  const L = cfg.live || {}; const lb = me?.agent?.liveBook; const tag = $('#live-tag');
+  tag.textContent = L.killed ? 'KILLED' : lb?.enabled ? 'ON' : L.serverEnabled ? 'READY' : 'OFF'; tag.className = `tag ${L.killed || lb?.enabled ? 'dn' : ''}`;
+  let h = '';
+  if (L.killed) h += `<div class="diag"><b>KILL SWITCH ENGAGED</b>${esc(L.killedReason || '')}. No live buys until an admin releases it. Sells still allowed.</div>`;
+  if (!L.serverEnabled) h += '<p class="dim">Live trading is switched off on this server. Everything is paper.</p>';
+  h += `<p class="dim">LIMITS › ${esc(limitsText(L.limits))}</p>`;
+  if (!me?.wallet) h += '<p class="dim">Connect Phantom to let your agent propose real trades.</p>';
+  else if (me.demoLogin) h += '<p class="dim">Demo wallets cannot trade live.</p>';
+  else if (me.agent) h += autoSection(L);
+  if (!me?.wallet || me.demoLogin || me.agent?.mode === 'live') {}
+  else if (!lb?.enabled) h += L.serverEnabled ? `<div class="sub">OR: APPROVE EACH TRADE</div><p class="dim">Your agent proposes swaps from <b>your</b> Phantom wallet and you sign every one.</p><button class="btn ghost mini" data-cmd="live on">[ ENABLE PROPOSALS ]</button>` : '';
+  else {
+    const pending = openProposals();
+    h += `<dl class="kv"><dt>per trade</dt><dd>${lb.tradeSol || L.limits?.maxTradeSol} SOL</dd><dt>spent today</dt><dd>${(lb.spentToday || 0).toFixed(3)} / ${L.limits?.maxDailySol} SOL</dd><dt>realised</dt><dd class="${cls(lb.realized)}">${sol(lb.realized, 4)} SOL</dd></dl>`;
+    h += `<div class="sub">AWAITING YOUR SIGNATURE</div>` + (pending.length ? pending.map((x, i) => `<div class="prop"><span><b>${i + 1}. ${x.side.toUpperCase()} ${esc(x.symbol)}</b> ${x.side === 'buy' ? `${x.sizeSol} SOL` : `${Math.round(x.frac * 100)}%`} <span class="dim">${esc(x.reason)} · ${Math.max(0, Math.round((x.expiresAt - Date.now()) / 1000))}s</span></span><span><button class="btn mini ok" data-approve="${x.id}">SIGN</button> <button class="btn mini ghost" data-cmd="reject ${i + 1}">X</button></span></div>`).join('') : '<p class="dim">nothing yet. the agent proposes when it would trade.</p>');
+    const sub = (lb.proposals || []).filter((x) => x.status === 'submitted');
+    if (sub.length) h += `<p class="am">${sub.length} swap(s) confirming on-chain…</p>`;
+    h += `<div class="sub">LIVE POSITIONS</div>` + (lb.positions.length ? `<table><tr><th>token</th><th class="r">cost</th><th class="r">x</th><th class="r">age</th></tr>${lb.positions.map((p) => `<tr><td>${esc(p.symbol)}</td><td class="r">${p.cost.toFixed(3)}</td><td class="r ${cls(p.mult - 1)}">${p.mult.toFixed(2)}</td><td class="r">${p.ageMin.toFixed(0)}m</td></tr>`).join('')}</table>` : '<p class="dim">flat.</p>');
+    h += `<p><button class="btn ghost mini" data-cmd="live off">[ TURN LIVE OFF ]</button></p>`;
+  }
+  $('#live-body').innerHTML = h;
+}
+document.addEventListener('click', (e) => { const id = e.target.closest('[data-approve]')?.dataset.approve; if (id) approve(id); });
+
+function modal(html) {
+  return new Promise((resolve) => {
+    const m = document.createElement('div'); m.className = 'modal'; m.setAttribute('role', 'dialog');
+    m.innerHTML = `<form class="modal-card">${html}<div class="row"><button type="button" class="btn ghost" data-x>[ CANCEL ]</button><button class="btn danger">[ CONFIRM ]</button></div></form>`;
+    document.body.append(m); const f = m.querySelector('form'); f.querySelector('input')?.focus();
+    m.querySelector('[data-x]').onclick = () => { m.remove(); resolve(null); };
+    f.onsubmit = (e) => { e.preventDefault(); const data = Object.fromEntries(new FormData(f)); m.remove(); resolve(data); };
+  });
+}
+const WARNING = `<h3>⚠ REAL MONEY</h3><ul><li>Meme coins are extremely risky. Most go to zero, many are rugs. Assume you will lose everything you put in.</li><li>The agent's backtest and paper results do not predict live results. Slippage, fees and failed transactions are real.</li><li>Nothing here is financial advice.</li></ul>`;
+async function liveOptIn() {
+  const L = cfg.live || {};
+  const r = await modal(`${WARNING}<p>Your agent will <b>propose</b> swaps from your wallet. You sign every one in Phantom. Limits: ${esc(limitsText(L.limits))}.</p>
+    <label>SOL per trade (max ${L.limits?.maxTradeSol}) <input name="tradeSol" type="number" step="0.001" min="0.001" max="${L.limits?.maxTradeSol}" value="${L.limits?.maxTradeSol}"></label>
+    <label>Type <b>I UNDERSTAND</b> <input name="confirm" autocomplete="off" required></label>`);
+  if (!r) return print('cancelled.');
+  await api('/api/me/live', { method: 'POST', body: JSON.stringify({ enable: true, confirm: r.confirm.trim().toUpperCase(), tradeSol: +r.tradeSol }) });
+  await refresh(); print('live proposals ON. approve trades in the LIVE panel.', 'ok');
+}
+async function grandLive(on) {
+  let confirm;
+  if (on) { const r = await modal(`${WARNING}<p>The Grand Chud will buy and sell on its own from its dedicated wallet, within: ${esc(limitsText(cfg.live?.limits))}.</p><label>Type <b>I UNDERSTAND</b> <input name="confirm" autocomplete="off" required></label>`); if (!r) return print('cancelled.'); confirm = r.confirm.trim().toUpperCase(); }
+  await api('/api/admin/grand', { method: 'POST', body: JSON.stringify({ on, confirm }) }); await refresh();
+  print(on ? 'GRAND CHUD IS LIVE ON MAINNET.' : 'Grand Chud live buying off.', on ? 'e' : 'ok');
+}
+function adminControls(g) {
+  const L = cfg.live || {};
+  return `<div class="admin"><span class="dim">ADMIN ›</span> ${L.serverEnabled ? (g.liveOn ? '<button class="btn mini ghost" data-cmd="stoplive">STOP LIVE BUYS</button>' : '<button class="btn mini danger" data-cmd="golive">GO LIVE</button>') : '<span class="dim">server live off</span>'}
+    ${L.killed ? '<button class="btn mini ok" data-cmd="unkill">RELEASE KILL SWITCH</button>' : '<button class="btn mini danger" data-cmd="kill">KILL SWITCH</button>'}</div>`;
+}
+
+let web3p;
+const loadWeb3 = () => (web3p ||= new Promise((res, rej) => { const s = document.createElement('script'); s.src = '/vendor/solana-web3-1.98.0.min.js'; s.onload = () => res(window.solanaWeb3); s.onerror = () => rej(new Error('could not load Solana library')); document.head.append(s); }));
+let approving = false;
+async function approve(id) {
+  if (approving) return; approving = true;
+  try {
+    const prov = window.phantom?.solana || providers()[0]?.[1];
+    if (!prov) throw new Error('Phantom not found');
+    if (!prov.publicKey) await prov.connect();
+    if (prov.publicKey.toString() !== me.wallet.address) throw new Error(`Phantom is on ${short(prov.publicKey.toString())}, switch it to ${short(me.wallet.address)}`);
+    print('building swap via Jupiter…');
+    const b = await api(`/api/me/proposals/${id}/build`, { method: 'POST' });
+    const web3 = await loadWeb3();
+    const tx = web3.VersionedTransaction.deserialize(Uint8Array.from(atob(b.tx), (c) => c.charCodeAt(0)));
+    print(`sign the ${b.side} of ${b.symbol} in Phantom…`, 'w');
+    const { signature } = await prov.signAndSendTransaction(tx);
+    await api(`/api/me/proposals/${id}/submitted`, { method: 'POST', body: JSON.stringify({ signature }) });
+    print(`sent. tx ${signature.slice(0, 10)}… confirming on-chain.`, 'ok'); await refresh();
+  } catch (e) { print(`ERR ${e.message}`, 'e'); }
+  finally { approving = false; }
 }
 
 document.querySelectorAll('canvas.hero').forEach((c) => mountHero(c).catch((e) => console.warn('hero', e)));
