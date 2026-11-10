@@ -16,7 +16,8 @@
   <canvas class="hero" role="img" aria-label="Chud OS logo: half human, half terminal face"></canvas>
   <pre id="boot-log"></pre>
   <div id="boot-actions" hidden>
-    <button class="btn primary" data-act="connect">[ CONNECT WALLET ]</button>
+    <button class="btn primary phantom" data-act="phantom">[ 👻 CONNECT PHANTOM ]</button>
+    <button class="btn" data-act="connect">[ OTHER WALLET ]</button>
     <button class="btn" data-act="demo">[ DEMO WALLET ]</button>
     <button class="btn ghost" data-act="enter">[ BROWSE AS GUEST ]</button>
   </div>
@@ -27,7 +28,7 @@
   <header class="bar">
     <span class="brand"><img src="/logo.png" alt=""> CHUD&nbsp;OS <small>v0.1</small></span>
     <span id="status"></span>
-    <span id="clock"></span>
+    <span class="bar-right"><button id="bar-wallet" class="btn mini phantom" data-cmd="connect phantom">👻 CONNECT PHANTOM</button><span id="clock"></span></span>
   </header>
 
   <div class="hero-wrap"><canvas class="hero" role="img" aria-label="Chud OS logo: half human, half terminal face"></canvas></div>
@@ -74,7 +75,8 @@
     </section>
   </div>
 
-  <section class="term">
+  <section class="term" id="term" aria-label="terminal">
+    <div class="term-head"><span>▮ chud@os — terminal</span><button id="term-min" aria-label="minimise terminal" title="minimise">_</button></div>
     <pre id="out"></pre>
     <form id="prompt" autocomplete="off"><label for="cmd">chud@os:~$</label><input id="cmd" spellcheck="false" autofocus aria-label="command"></form>
   </section>

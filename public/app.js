@@ -45,8 +45,12 @@ async function boot() {
 $('#boot-actions').addEventListener('click', async (e) => {
   const act = e.target.dataset.act; if (!act) return;
   if (act === 'enter') return enter();
-  enter(); await run(act);
+  enter(); await run(act === 'phantom' ? 'connect phantom' : act);
 });
+// terminal popup: always visible, can be minimised to its title bar
+function setTermMin(min) { $('#term').classList.toggle('min', min); $('#os').classList.toggle('term-min', min); $('#term-min').textContent = min ? '▢' : '_'; $('#term-min').setAttribute('aria-label', min ? 'restore terminal' : 'minimise terminal'); try { localStorage.setItem('chud.termMin', min ? '1' : ''); } catch {} }
+$('.term-head').addEventListener('click', () => setTermMin(!$('#term').classList.contains('min')));
+try { if (localStorage.getItem('chud.termMin')) setTermMin(true); } catch {}
 function enter() { $('#boot').hidden = true; $('#os').hidden = false; $('#cmd').focus(); render(); help(true); checkBust(); }
 
 // ---------- wallet connect ----------
@@ -58,8 +62,19 @@ function providers() {
   if (!out.length && window.solana) out.push(['solana', window.solana]);
   return out;
 }
+const MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+function noPhantom() {
+  if (MOBILE) { // reopen this page inside Phantom's in-app browser
+    print('opening CHUD OS inside the Phantom app…');
+    location.href = `https://phantom.app/ul/browse/${encodeURIComponent(location.href)}?ref=${encodeURIComponent(location.origin)}`;
+  } else {
+    print('Phantom not detected. Install it, refresh this page, then hit CONNECT PHANTOM again.', 'e');
+    window.open('https://phantom.com/download', '_blank', 'noopener');
+  }
+}
 async function connect(name) {
   const ps = providers();
+  if (name === 'phantom' && !ps.some(([n]) => n === 'phantom')) return noPhantom();
   const p = (name && ps.find(([n]) => n === name)) || ps[0];
   if (!p) { print('No Solana wallet extension found. Install Phantom, Solflare or Backpack — or type "demo".', 'e'); return; }
   const [pname, prov] = p;
@@ -90,7 +105,7 @@ function b58(bytes) {
 }
 
 // ---------- terminal ----------
-function print(msg, kind = '') { const o = $('#out'); const line = document.createElement('div'); line.className = kind; line.textContent = msg; o.append(line); o.scrollTop = o.scrollHeight; }
+function print(msg, kind = '') { if (kind === 'e' || kind === 'ok') setTermMin(false); const o = $('#out'); const line = document.createElement('div'); line.className = kind; line.textContent = msg; o.append(line); o.scrollTop = o.scrollHeight; }
 function help(short) {
   if (short) return print('CHUD OS ready. type "help" for commands.', 'w');
   print([
@@ -177,8 +192,11 @@ function render() {
 
 function renderWallet() {
   const w = me?.wallet;
+  const bw = $('#bar-wallet');
+  if (w) { bw.textContent = `● ${short(w.address)}`; bw.className = 'btn mini linked'; bw.dataset.cmd = 'sync'; bw.title = 'linked · click to resync'; }
+  else { bw.textContent = '👻 CONNECT PHANTOM'; bw.className = 'btn mini phantom'; bw.dataset.cmd = 'connect phantom'; bw.title = ''; }
   $('#wallet-tag').textContent = w ? (w.demo ? 'DEMO' : w.verified ? 'VERIFIED' : 'WATCH') : 'OFFLINE';
-  if (!w) { $('#wallet-body').innerHTML = `<p class="dim">No wallet linked.</p><p><button class="btn primary" data-cmd="connect">[ CONNECT ]</button> <button class="btn ghost" data-cmd="demo">[ DEMO ]</button></p>`; $('#diag-body').innerHTML = '<p class="dim">Awaiting trade history…</p>'; $('#trips-body').innerHTML = ''; return; }
+  if (!w) { $('#wallet-body').innerHTML = `<p class="dim">No wallet linked.</p><p><button class="btn primary phantom" data-cmd="connect phantom">[ 👻 CONNECT PHANTOM ]</button></p><p><button class="btn ghost" data-cmd="connect">[ OTHER WALLET ]</button> <button class="btn ghost" data-cmd="demo">[ DEMO ]</button></p>`; $('#diag-body').innerHTML = '<p class="dim">Awaiting trade history…</p>'; $('#trips-body').innerHTML = ''; return; }
   const s = w.stats;
   $('#wallet-body').innerHTML = `<dl class="kv">
     <dt>wallet</dt><dd title="${esc(w.address)}">${short(w.address)}</dd>
